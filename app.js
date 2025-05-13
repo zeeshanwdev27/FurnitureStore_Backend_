@@ -494,5 +494,93 @@ app.put("/api/products/:id", async (req, res) => {
 });
 
 
+// Update Only Stocks from Admin Dashboard
+app.put("/api/products/:id/stock", async (req, res) => {
+  try {
+    const { stock } = req.body;
+
+    // Validate stock value
+    if (typeof stock !== 'number' || stock < 0) {
+      return res.status(400).json({ 
+        error: "Validation failed",
+        details: { stock: "Must be a positive number" }
+      });
+    }
+
+    const updatedProduct = await Product.findByIdAndUpdate(
+      req.params.id,
+      { stock },
+      { new: true, runValidators: true }
+    );
+
+    if (!updatedProduct) {
+      return res.status(404).json({ error: "Product not found" });
+    }
+
+    res.json({
+      success: true,
+      message: "Stock updated",
+      newStock: updatedProduct.stock
+    });
+  } catch (err) {
+    res.status(500).json({ 
+      error: "Stock update failed",
+      details: process.env.NODE_ENV === 'development' ? err.message : undefined
+    });
+  }
+});
+
+// Add Product from Admin Dashboard
+app.post("/api/products", async (req, res) => {
+  try {
+    const { name, description, price, category, stock, image } = req.body;
+    
+    // Validation
+    if (!name || !price || !category) {
+      return res.status(400).json({ 
+        error: "Validation failed",
+        details: {
+          name: !name ? "Name is required" : undefined,
+          price: !price ? "Price is required" : undefined,
+          category: !category ? "Category is required" : undefined
+        }
+      });
+    }
+
+    if (isNaN(price)) {
+      return res.status(400).json({ 
+        error: "Validation failed",
+        details: {
+          price: "Price must be a number"
+        }
+      });
+    }
+
+    const newProduct = new Product({
+      name,
+      description: description || "",
+      price: parseFloat(price),
+      category,
+      stock: parseInt(stock) || 0,
+      image: image || { url: "", filename: "" }
+    });
+
+    const savedProduct = await newProduct.save();
+
+    res.status(201).json({
+      success: true,
+      message: "Product created successfully",
+      product: savedProduct
+    });
+  } catch (err) {
+    console.error("Create product error:", err);
+    res.status(500).json({ 
+      error: "Failed to create product",
+      details: process.env.NODE_ENV === 'development' ? err.message : undefined,
+      validationError: err.name === 'ValidationError' ? err.errors : undefined
+    });
+  }
+});
+
 // Start Server
 app.listen(port, () => console.log(`Server running on port ${port}`));
