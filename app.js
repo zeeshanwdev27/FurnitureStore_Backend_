@@ -413,7 +413,7 @@ app.get("/api/orders/:orderId", authenticate, async (req, res) => {
 // Admin ROutes
 
 
-// Delete Products from Admin Dashboard
+// Delete Products for Admin Panel
 app.delete("/api/products/:id", async (req, res) => {
   try {
     const product = await Product.findByIdAndDelete(req.params.id);
@@ -426,7 +426,7 @@ app.delete("/api/products/:id", async (req, res) => {
   }
 });
 
-// Update Products from Admin Dashboard
+// Update Products for Admin Panel
 app.put("/api/products/:id", async (req, res) => {
   try {
     const { name, description, price, category, stock, image } = req.body;
@@ -494,7 +494,7 @@ app.put("/api/products/:id", async (req, res) => {
 });
 
 
-// Update Only Stocks from Admin Dashboard
+// Update Only Stocks for Admin Panel
 app.put("/api/products/:id/stock", async (req, res) => {
   try {
     const { stock } = req.body;
@@ -530,7 +530,7 @@ app.put("/api/products/:id/stock", async (req, res) => {
   }
 });
 
-// Add Product from Admin Dashboard
+// Add Product for Admin Panel
 app.post("/api/products", async (req, res) => {
   try {
     const { name, description, price, category, stock, image } = req.body;
@@ -581,6 +581,71 @@ app.post("/api/products", async (req, res) => {
     });
   }
 });
+
+
+// Order Routes for Admin Panel
+app.get("/api/admin/orders", async (req, res) => {
+  try {
+    const orders = await Order.find()
+      .populate("user", "email username") // Include user info
+      .populate("items.product", "name price image")
+      .sort({ createdAt: -1 });
+
+    res.json({
+      success: true,
+      count: orders.length,
+      orders
+    });
+  } catch (err) {
+    console.error("Admin order fetch error:", err);
+    res.status(500).json({ 
+      success: false,
+      error: "Failed to fetch orders",
+      details: process.env.NODE_ENV === 'development' ? err.message : undefined
+    });
+  }
+});
+
+app.put("/api/admin/orders/:orderId", async (req, res) => {
+  try {
+    const { status } = req.body;
+    
+    if (!status || !['pending', 'processing', 'shipped', 'delivered', 'cancelled'].includes(status)) {
+      return res.status(400).json({
+        success: false,
+        error: "Valid status is required"
+      });
+    }
+
+    const order = await Order.findByIdAndUpdate(
+      req.params.orderId,
+      { status },
+      { new: true }
+    );
+
+    if (!order) {
+      return res.status(404).json({ 
+        success: false,
+        error: "Order not found"
+      });
+    }
+
+    res.json({
+      success: true,
+      order
+    });
+    
+  } catch (err) {
+    console.error("Admin order update error:", err);
+    res.status(500).json({ 
+      success: false,
+      error: "Failed to update order",
+      details: process.env.NODE_ENV === 'development' ? err.message : undefined
+    });
+  }
+});
+
+
 
 // Start Server
 app.listen(port, () => console.log(`Server running on port ${port}`));
