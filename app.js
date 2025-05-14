@@ -17,11 +17,13 @@ const app = express();
 const port = 3000;
 
 // Middleware
-app.use(cors({
-  origin: 'http://localhost:5173', // Or whatever port your React app runs on
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE']
-}));
+app.use(
+  cors({
+    origin: "http://localhost:5173", // Or whatever port your React app runs on
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE"],
+  })
+);
 app.use(express.json());
 connectDB(); // Connect to MongoDB
 
@@ -45,7 +47,7 @@ const authenticate = async (req, res, next) => {
 app.get("/", (req, res) => res.send("Hello World!"));
 
 // Featured Product Routes
-app.get('/api/products', async (req, res) => {
+app.get("/api/products", async (req, res) => {
   try {
     const data = await Product.find();
     res.json(data);
@@ -156,7 +158,6 @@ app.post("/api/signup", async (req, res) => {
   }
 });
 
-
 // SignIn
 app.post("/api/signin", async (req, res) => {
   try {
@@ -166,10 +167,21 @@ app.post("/api/signin", async (req, res) => {
       return res.status(401).json({ error: "Invalid credentials" });
     }
 
+    // Check if user is suspended
+    if (user.status === 'Suspended') {
+      return res.status(403).json({ 
+        error: "Your account has been suspended. Please contact support." 
+      });
+    }
+
     const isMatch = await bcrypt.compare(password, user.password); // Check password
     if (!isMatch) {
       return res.status(401).json({ error: "Invalid credentials" });
     }
+
+    // Update lastLogin timestamp
+    user.lastLogin = new Date();
+    await user.save();
 
     const token = jwt.sign(
       // Generate token
@@ -193,62 +205,78 @@ app.post("/api/signin", async (req, res) => {
   }
 });
 
-
 // Protected Route Example
 app.get("/api/protected", authenticate, (req, res) => {
   res.json({ message: "This is protected data", userId: req.userId });
 });
 
-
 // Order Routes - Updated version
-app.post('/api/orders', authenticate, async (req, res) => {
+app.post("/api/orders", authenticate, async (req, res) => {
   try {
-    console.log('Received order request from user:', req.userId);
-    console.log('Request body:', JSON.stringify(req.body, null, 2));
+    console.log("Received order request from user:", req.userId);
+    console.log("Request body:", JSON.stringify(req.body, null, 2));
 
     const { shippingInfo, paymentInfo, items } = req.body;
-    
+
     // Validate required fields
-    const requiredShippingFields = ['firstName', 'lastName', 'email', 'phone', 'address', 'city', 'state', 'zipCode'];
-    const missingShippingFields = requiredShippingFields.filter(field => !shippingInfo[field]);
-    
+    const requiredShippingFields = [
+      "firstName",
+      "lastName",
+      "email",
+      "address",
+      "city",
+      "state",
+      "zipCode",
+    ];
+    const missingShippingFields = requiredShippingFields.filter(
+      (field) => !shippingInfo[field]
+    );
+
     if (missingShippingFields.length > 0) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        error: `Missing shipping fields: ${missingShippingFields.join(', ')}`
+        error: `Missing shipping fields: ${missingShippingFields.join(", ")}`,
       });
     }
 
     if (!items || !Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        error: "Cart is empty"
+        error: "Cart is empty",
       });
     }
 
     // Validate each item in cart
-    const invalidItems = items.filter(item => (
-      !item.product || 
-      !mongoose.Types.ObjectId.isValid(item.product) ||
-      typeof item.price !== 'number' || 
-      isNaN(item.price) ||
-      !item.quantity || 
-      typeof item.quantity !== 'number' ||
-      isNaN(item.quantity)
-    ));
+    const invalidItems = items.filter(
+      (item) =>
+        !item.product ||
+        !mongoose.Types.ObjectId.isValid(item.product) ||
+        typeof item.price !== "number" ||
+        isNaN(item.price) ||
+        !item.quantity ||
+        typeof item.quantity !== "number" ||
+        isNaN(item.quantity)
+    );
 
     if (invalidItems.length > 0) {
-      console.error('Invalid items detected:', invalidItems);
+      console.error("Invalid items detected:", invalidItems);
       return res.status(400).json({
         success: false,
         error: "Invalid items in cart",
-        invalidItems: invalidItems.map(i => ({ product: i.product }))
+        invalidItems: invalidItems.map((i) => ({ product: i.product })),
       });
     }
 
     // Calculate totals to verify client calculation
-    const calculatedSubtotal = items.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-    const calculatedTotal = calculatedSubtotal + paymentInfo.shipping + paymentInfo.tax - (paymentInfo.discount || 0);
+    const calculatedSubtotal = items.reduce(
+      (sum, item) => sum + item.price * item.quantity,
+      0
+    );
+    const calculatedTotal =
+      calculatedSubtotal +
+      paymentInfo.shipping +
+      paymentInfo.tax -
+      (paymentInfo.discount || 0);
 
     // Create order document with proper item mapping
     const order = new Order({
@@ -257,27 +285,27 @@ app.post('/api/orders', authenticate, async (req, res) => {
       paymentInfo: {
         ...paymentInfo,
         subtotal: calculatedSubtotal,
-        total: calculatedTotal
+        total: calculatedTotal,
       },
-      items: items.map(item => ({
-        product: item.product,  // Use item.product instead of item._id
+      items: items.map((item) => ({
+        product: item.product, // Use item.product instead of item._id
         name: item.name,
         price: item.price,
         quantity: item.quantity,
-        image: item.image
+        image: item.image,
       })),
-      status: 'pending',
-      createdAt: new Date()
+      status: "pending",
+      createdAt: new Date(),
     });
 
     // Validate before saving
     const validationError = order.validateSync();
     if (validationError) {
-      console.error('Order validation failed:', validationError);
+      console.error("Order validation failed:", validationError);
       return res.status(400).json({
         success: false,
         error: "Order validation failed",
-        details: validationError.errors
+        details: validationError.errors,
       });
     }
 
@@ -288,27 +316,26 @@ app.post('/api/orders', authenticate, async (req, res) => {
     res.status(201).json({
       success: true,
       orderId: savedOrder._id,
-      order: savedOrder
+      order: savedOrder,
     });
-
   } catch (err) {
     console.error("Order creation error:", err);
-    
+
     // Handle duplicate key errors (MongoDB)
     if (err.code === 11000) {
       return res.status(400).json({
         success: false,
         error: "Order already exists",
-        details: err.keyValue
+        details: err.keyValue,
       });
     }
 
     // Handle validation errors
-    if (err.name === 'ValidationError') {
+    if (err.name === "ValidationError") {
       return res.status(400).json({
         success: false,
         error: "Validation failed",
-        details: Object.values(err.errors).map(e => e.message)
+        details: Object.values(err.errors).map((e) => e.message),
       });
     }
 
@@ -316,12 +343,12 @@ app.post('/api/orders', authenticate, async (req, res) => {
     res.status(500).json({
       success: false,
       error: "Failed to create order",
-      ...(process.env.NODE_ENV === 'development' && {
+      ...(process.env.NODE_ENV === "development" && {
         details: {
           message: err.message,
-          stack: err.stack
-        }
-      })
+          stack: err.stack,
+        },
+      }),
     });
   }
 });
@@ -336,14 +363,14 @@ app.get("/api/orders", authenticate, async (req, res) => {
     res.json({
       success: true,
       count: orders.length,
-      orders
+      orders,
     });
   } catch (err) {
     console.error("Error fetching orders:", err);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
       error: "Failed to fetch orders",
-      details: process.env.NODE_ENV === 'development' ? err.message : undefined
+      details: process.env.NODE_ENV === "development" ? err.message : undefined,
     });
   }
 });
@@ -352,11 +379,11 @@ app.get("/api/orders", authenticate, async (req, res) => {
 app.get("/api/orders/:orderId", authenticate, async (req, res) => {
   try {
     // console.log(`Fetching order ${req.params.orderId} for user ${req.userId}`);
-    
+
     if (!mongoose.Types.ObjectId.isValid(req.params.orderId)) {
       return res.status(400).json({
         success: false,
-        error: "Invalid order ID format"
+        error: "Invalid order ID format",
       });
     }
 
@@ -365,16 +392,16 @@ app.get("/api/orders/:orderId", authenticate, async (req, res) => {
       .lean();
 
     if (!order) {
-      return res.status(404).json({ 
+      return res.status(404).json({
         success: false,
-        error: "Order not found"
+        error: "Order not found",
       });
     }
 
     if (order.user.toString() !== req.userId) {
-      return res.status(403).json({ 
+      return res.status(403).json({
         success: false,
-        error: "Not authorized to view this order"
+        error: "Not authorized to view this order",
       });
     }
 
@@ -382,36 +409,32 @@ app.get("/api/orders/:orderId", authenticate, async (req, res) => {
     const formattedOrder = {
       ...order,
       createdAt: order.createdAt.toISOString(),
-      updatedAt: order.updatedAt?.toISOString()
+      updatedAt: order.updatedAt?.toISOString(),
     };
 
     res.json({
       success: true,
-      order: formattedOrder
+      order: formattedOrder,
     });
-    
   } catch (err) {
     console.error("Order fetch error:", {
       error: err.message,
       stack: err.stack,
       orderId: req.params.orderId,
-      userId: req.userId
+      userId: req.userId,
     });
-    
-    res.status(500).json({ 
+
+    res.status(500).json({
       success: false,
       error: "Failed to fetch order",
-      ...(process.env.NODE_ENV === 'development' && {
-        details: err.message
-      })
+      ...(process.env.NODE_ENV === "development" && {
+        details: err.message,
+      }),
     });
   }
 });
 
-
-
 // Admin ROutes
-
 
 // Delete Products for Admin Panel
 app.delete("/api/products/:id", async (req, res) => {
@@ -430,69 +453,68 @@ app.delete("/api/products/:id", async (req, res) => {
 app.put("/api/products/:id", async (req, res) => {
   try {
     const { name, description, price, category, stock, image } = req.body;
-    
+
     // Enhanced validation
     if (!name || !price || !category) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         error: "Validation failed",
         details: {
           name: !name ? "Name is required" : undefined,
           price: !price ? "Price is required" : undefined,
-          category: !category ? "Category is required" : undefined
-        }
+          category: !category ? "Category is required" : undefined,
+        },
       });
     }
 
     if (isNaN(price)) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         error: "Validation failed",
         details: {
-          price: "Price must be a number"
-        }
+          price: "Price must be a number",
+        },
       });
     }
 
     const updatedProduct = await Product.findByIdAndUpdate(
       req.params.id,
-      { 
-        name, 
-        description: description || "", 
-        price: parseFloat(price), 
-        category, 
+      {
+        name,
+        description: description || "",
+        price: parseFloat(price),
+        category,
         stock: parseInt(stock) || 0,
-        image: image || { url: "", filename: "" }
+        image: image || { url: "", filename: "" },
       },
       { new: true, runValidators: true } // Added runValidators
     );
 
     if (!updatedProduct) {
-      return res.status(404).json({ 
+      return res.status(404).json({
         error: "Product not found",
-        details: `No product found with ID: ${req.params.id}`
+        details: `No product found with ID: ${req.params.id}`,
       });
     }
 
     res.json({
       success: true,
       message: "Product updated successfully",
-      product: updatedProduct
+      product: updatedProduct,
     });
   } catch (err) {
     console.error("Update error:", {
       error: err.message,
       stack: err.stack,
       body: req.body,
-      params: req.params
+      params: req.params,
     });
-    
-    res.status(500).json({ 
+
+    res.status(500).json({
       error: "Failed to update product",
-      details: process.env.NODE_ENV === 'development' ? err.message : undefined,
-      validationError: err.name === 'ValidationError' ? err.errors : undefined
+      details: process.env.NODE_ENV === "development" ? err.message : undefined,
+      validationError: err.name === "ValidationError" ? err.errors : undefined,
     });
   }
 });
-
 
 // Update Only Stocks for Admin Panel
 app.put("/api/products/:id/stock", async (req, res) => {
@@ -500,10 +522,10 @@ app.put("/api/products/:id/stock", async (req, res) => {
     const { stock } = req.body;
 
     // Validate stock value
-    if (typeof stock !== 'number' || stock < 0) {
-      return res.status(400).json({ 
+    if (typeof stock !== "number" || stock < 0) {
+      return res.status(400).json({
         error: "Validation failed",
-        details: { stock: "Must be a positive number" }
+        details: { stock: "Must be a positive number" },
       });
     }
 
@@ -520,12 +542,12 @@ app.put("/api/products/:id/stock", async (req, res) => {
     res.json({
       success: true,
       message: "Stock updated",
-      newStock: updatedProduct.stock
+      newStock: updatedProduct.stock,
     });
   } catch (err) {
-    res.status(500).json({ 
+    res.status(500).json({
       error: "Stock update failed",
-      details: process.env.NODE_ENV === 'development' ? err.message : undefined
+      details: process.env.NODE_ENV === "development" ? err.message : undefined,
     });
   }
 });
@@ -534,25 +556,25 @@ app.put("/api/products/:id/stock", async (req, res) => {
 app.post("/api/products", async (req, res) => {
   try {
     const { name, description, price, category, stock, image } = req.body;
-    
+
     // Validation
     if (!name || !price || !category) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         error: "Validation failed",
         details: {
           name: !name ? "Name is required" : undefined,
           price: !price ? "Price is required" : undefined,
-          category: !category ? "Category is required" : undefined
-        }
+          category: !category ? "Category is required" : undefined,
+        },
       });
     }
 
     if (isNaN(price)) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         error: "Validation failed",
         details: {
-          price: "Price must be a number"
-        }
+          price: "Price must be a number",
+        },
       });
     }
 
@@ -562,7 +584,7 @@ app.post("/api/products", async (req, res) => {
       price: parseFloat(price),
       category,
       stock: parseInt(stock) || 0,
-      image: image || { url: "", filename: "" }
+      image: image || { url: "", filename: "" },
     });
 
     const savedProduct = await newProduct.save();
@@ -570,18 +592,17 @@ app.post("/api/products", async (req, res) => {
     res.status(201).json({
       success: true,
       message: "Product created successfully",
-      product: savedProduct
+      product: savedProduct,
     });
   } catch (err) {
     console.error("Create product error:", err);
-    res.status(500).json({ 
+    res.status(500).json({
       error: "Failed to create product",
-      details: process.env.NODE_ENV === 'development' ? err.message : undefined,
-      validationError: err.name === 'ValidationError' ? err.errors : undefined
+      details: process.env.NODE_ENV === "development" ? err.message : undefined,
+      validationError: err.name === "ValidationError" ? err.errors : undefined,
     });
   }
 });
-
 
 // Order Routes for Admin Panel
 app.get("/api/admin/orders", async (req, res) => {
@@ -594,14 +615,14 @@ app.get("/api/admin/orders", async (req, res) => {
     res.json({
       success: true,
       count: orders.length,
-      orders
+      orders,
     });
   } catch (err) {
     console.error("Admin order fetch error:", err);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
       error: "Failed to fetch orders",
-      details: process.env.NODE_ENV === 'development' ? err.message : undefined
+      details: process.env.NODE_ENV === "development" ? err.message : undefined,
     });
   }
 });
@@ -609,11 +630,16 @@ app.get("/api/admin/orders", async (req, res) => {
 app.put("/api/admin/orders/:orderId", async (req, res) => {
   try {
     const { status } = req.body;
-    
-    if (!status || !['pending', 'processing', 'shipped', 'delivered', 'cancelled'].includes(status)) {
+
+    if (
+      !status ||
+      !["pending", "processing", "shipped", "delivered", "cancelled"].includes(
+        status
+      )
+    ) {
       return res.status(400).json({
         success: false,
-        error: "Valid status is required"
+        error: "Valid status is required",
       });
     }
 
@@ -624,28 +650,93 @@ app.put("/api/admin/orders/:orderId", async (req, res) => {
     );
 
     if (!order) {
-      return res.status(404).json({ 
+      return res.status(404).json({
         success: false,
-        error: "Order not found"
+        error: "Order not found",
       });
     }
 
     res.json({
       success: true,
-      order
+      order,
     });
-    
   } catch (err) {
     console.error("Admin order update error:", err);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
       error: "Failed to update order",
-      details: process.env.NODE_ENV === 'development' ? err.message : undefined
+      details: process.env.NODE_ENV === "development" ? err.message : undefined,
     });
   }
 });
 
+// User Routes for Admin Panel
+app.get("/api/admin/users", async (req, res) => {
+  try {
+    const users = await User.find().select("-password");
+    res.json({ users });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch users" });
+  }
+});
 
+app.post("/api/admin/users", async (req, res) => {
+  try {
+    const { username, email, password, role, status } = req.body;
+
+    // Validation
+    if (!username || !email || !password) {
+      return res
+        .status(400)
+        .json({ error: "Username, email and password are required" });
+    }
+
+    // const hashedPassword = await bcrypt.hash(password, 10);
+    const newUser = new User({
+      username,
+      email,
+      password,
+      role: role || "Customer",
+      status: status || "Active",
+    });
+
+    await newUser.save();
+    res.status(201).json({ user: newUser });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to create user" });
+  }
+});
+
+app.put("/api/admin/users/:id", async (req, res) => {
+  try {
+    const { username, email, role, status } = req.body;
+    const user = await User.findByIdAndUpdate(
+      req.params.id,
+      { username, email, role, status },
+      { new: true }
+    ).select("-password");
+
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    res.json({ user });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to update user" });
+  }
+});
+
+app.delete("/api/admin/users/:id", async (req, res) => {
+  try {
+    const user = await User.findByIdAndDelete(req.params.id);
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+    res.json({ message: "User deleted successfully" });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to delete user" });
+  }
+});
 
 // Start Server
 app.listen(port, () => console.log(`Server running on port ${port}`));
