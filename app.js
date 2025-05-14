@@ -691,7 +691,16 @@ app.post("/api/admin/users", async (req, res) => {
         .json({ error: "Username, email and password are required" });
     }
 
-    // const hashedPassword = await bcrypt.hash(password, 10);
+    // Check if trying to create admin and one already exists
+    if (role === "Admin") {
+      const existingAdmin = await User.findOne({ role: "Admin" });
+      if (existingAdmin) {
+        return res.status(400).json({ 
+          error: "Admin user already exists. Only one admin is allowed." 
+        });
+      }
+    }
+
     const newUser = new User({
       username,
       email,
@@ -737,6 +746,70 @@ app.delete("/api/admin/users/:id", async (req, res) => {
     res.status(500).json({ error: "Failed to delete user" });
   }
 });
+
+
+
+// Add AdminSettings for Admin Panel
+
+// Get current admin profile
+app.get('/api/admin/me', async (req, res) => {
+  try {
+    const user = await User.findOne({ role: "Admin" });
+    // console.log(user);
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+    res.json({ user });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch user data" });
+  }
+});
+
+// Update admin profile
+app.put('/api/admin/update-profile', async (req, res) => {
+  try {
+    const { email, currentPassword, newPassword } = req.body;
+    const user = await User.findOne({ role: "Admin" });
+
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    // Check if password is being changed
+    if (currentPassword && newPassword) {
+      const isMatch = await bcrypt.compare(currentPassword, user.password);
+      if (!isMatch) {
+        return res.status(401).json({ error: "Current password is incorrect" });
+      }
+      // Just assign the new password - hashing will be handled by the model
+      user.password = newPassword;
+    }
+
+    // Update email if changed
+    if (email && email !== user.email) {
+      const emailExists = await User.findOne({ email });
+      if (emailExists) {
+        return res.status(400).json({ error: "Email already in use" });
+      }
+      user.email = email;
+    }
+
+    await user.save();
+
+    res.json({ 
+      message: "Profile updated successfully",
+      user: {
+        id: user._id,
+        email: user.email,
+        username: user.username
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to update profile" });
+  }
+});
+
+
 
 // Start Server
 app.listen(port, () => console.log(`Server running on port ${port}`));
