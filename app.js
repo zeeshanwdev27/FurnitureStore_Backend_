@@ -12,6 +12,7 @@ import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 
 import Order from "./models/Order.js";
+import Category from "./models/Category.js";
 
 const app = express();
 const port = 3000;
@@ -49,7 +50,7 @@ app.get("/", (req, res) => res.send("Hello World!"));
 // Featured Product Routes
 app.get("/api/products", async (req, res) => {
   try {
-    const data = await Product.find();
+    const data = await Product.find().populate('category', 'name');
     res.json(data);
   } catch (error) {
     res.status(500).json({ error: "Failed to fetch products" });
@@ -59,34 +60,67 @@ app.get("/api/products", async (req, res) => {
 // All Products Route
 app.get("/api/all-products", async (req, res) => {
   try {
-    const products = await Product.find();
+    const products = await Product.find().populate('category', 'name');
     res.json(products);
   } catch (err) {
     res.status(500).json({ error: "Failed to fetch all products" });
   }
 });
 
-// Category Route
-app.get("/api/category/:category", async (req, res) => {
-  try {
-    const category = req.params.category;
-    const products = await Product.find({ category });
-    res.json(products);
-  } catch (err) {
-    res.status(500).json({ error: "Server error" });
-  }
-});
-
-// Specific Product
+// Specific Product with populated category
 app.get("/api/product/:id", async (req, res) => {
   try {
-    const product = await Product.findById(req.params.id);
+    const product = await Product.findById(req.params.id)
+      .populate('category', 'name'); // Populate only the category name
+    
     if (!product) {
       return res.status(404).json({ error: "Product not found" });
     }
     res.json(product);
   } catch (err) {
-    res.status(500).json({ error: "Failed to fetch product" });
+    console.error("Error fetching product:", err);
+    res.status(500).json({ 
+      error: "Failed to fetch product",
+      ...(process.env.NODE_ENV === 'development' && { details: err.message })
+    });
+  }
+});
+
+// Category Products route (updated)
+app.get("/api/category/:category", async (req, res) => {
+  try {
+    // First find if the param is an ID or name
+    const isObjectId = mongoose.Types.ObjectId.isValid(req.params.category);
+    
+    let products;
+    if (isObjectId) {
+      products = await Product.find({ category: req.params.category })
+        .populate('category', 'name');
+    } else {
+      // Find by category name
+      const category = await Category.findOne({ 
+        name: { $regex: new RegExp(`^${req.params.category}$`, 'i') }
+      });
+      
+      if (!category) {
+        return res.status(404).json({ error: "Category not found" });
+      }
+      
+      products = await Product.find({ category: category._id })
+        .populate('category', 'name');
+    }
+
+    if (!products.length) {
+      return res.status(404).json({ error: "No products found in this category" });
+    }
+    
+    res.json(products);
+  } catch (err) {
+    console.error("Error fetching category products:", err);
+    res.status(500).json({ 
+      error: "Server error",
+      ...(process.env.NODE_ENV === 'development' && { details: err.message })
+    });
   }
 });
 
@@ -437,7 +471,10 @@ app.get("/api/orders/:orderId", authenticate, async (req, res) => {
   }
 });
 
-// Admin ROutes
+
+
+
+// ====== Admin Panel ROutes======
 
 // Delete Products for Admin Panel
 app.delete("/api/products/:id", async (req, res) => {
@@ -811,7 +848,7 @@ app.put('/api/admin/update-profile', async (req, res) => {
 
 
 
-// Analytics Routes
+// ====== Analytics Routes for Admin Panel ======
 app.get('/api/analytics/stats', async (req, res) => {
   try {
     const { range = 'Last 7 Days' } = req.query;
@@ -1148,9 +1185,85 @@ app.get('/api/analytics/recent-activity',  async (req, res) => {
 });
 
 
+// ====== Create/Delete New Category Routes for Admin Panel ======
+app.get('/api/categories', async (req, res) => {
+  try {
+    const categories = await Category.find().sort({ name: 1 });
+    res.json(categories);
+  } catch (err) {
+    console.error('Failed to fetch categories:', err);
+    res.status(500).json({ 
+      error: "Failed to fetch categories",
+      ...(process.env.NODE_ENV === 'development' && { details: err.message })
+    });
+  }
+});
+
+app.post('/api/categories', async (req, res) => {
+  try {
+    const { name } = req.body;
+    
+    if (!name || typeof name !== 'string') {
+      return res.status(400).json({ error: "Valid category name is required" });
+    }
+
+    const cleanName = name.trim();
+    
+    const newCategory = new Category({
+      name: cleanName
+    });
+
+    const savedCategory = await newCategory.save();
+
+    res.status(201).json({ 
+      success: true,
+      message: "Category created successfully",
+      category: savedCategory
+    });
+  } catch (err) {
+    if (err.code === 11000) {
+      return res.status(400).json({ error: "Category already exists" });
+    }
+    console.error('Failed to create category:', err);
+    res.status(500).json({ 
+      error: "Failed to create category",
+      ...(process.env.NODE_ENV === 'development' && { details: err.message })
+    });
+  }
+});
+
+app.get('/api/category/:categoryId', async (req, res) => {
+  try {
+    const products = await Product.find({ 
+      category: req.params.categoryId 
+    }).populate('category');
+    
+    res.json(products);
+  } catch (err) {
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+app.delete('/api/categories/:id', async (req, res) => {
+  try {
+    const deletedCategory = await Category.findByIdAndDelete(req.params.id);
+    if (!deletedCategory) {
+      return res.status(404).json({ error: 'Category not found' });
+    }
+    res.json({ message: 'Category deleted successfully' });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to delete category' });
+  }
+});
 
 
-// Helper function to calculate percentage change
+
+
+
+
+
+
+// ====== Helper Functions ======
 function calculatePercentageChange(current, previous) {
   if (previous === 0) {
     return current === 0 ? 0 : 100;
@@ -1158,7 +1271,6 @@ function calculatePercentageChange(current, previous) {
   return ((current - previous) / previous) * 100;
 }
 
-// Helper function to format time ago
 function formatTimeAgo(date) {
   const seconds = Math.floor((new Date() - date) / 1000);
   
@@ -1179,14 +1291,6 @@ function formatTimeAgo(date) {
   
   return `${Math.floor(seconds)} second${seconds === 1 ? '' : 's'} ago`;
 }
-
-
-
-
-
-
-
-
 
 // Start Server
 app.listen(port, () => console.log(`Server running on port ${port}`));

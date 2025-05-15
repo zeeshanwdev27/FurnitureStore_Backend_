@@ -11,7 +11,11 @@ const productSchema = new schema({
       url: String,
       filename: String
     },
-    category: String
+      category: { 
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Category',
+      required: true
+    }
   });
 
 
