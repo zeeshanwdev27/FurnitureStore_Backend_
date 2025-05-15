@@ -134,6 +134,9 @@ app.post("/api/signup", async (req, res) => {
       // password: hashedPassword,
       password,
     });
+    
+    // Update lastLogin timestamp
+    newUser.lastLogin = new Date();
     await newUser.save();
 
     const token = jwt.sign(
