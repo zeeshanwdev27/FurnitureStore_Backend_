@@ -133,7 +133,7 @@ app.get("/api/search", async (req, res) => {
   try {
     const products = await Product.find({
       name: { $regex: query, $options: "i" },
-    }).limit(10);
+    }).limit(10).populate('category', 'name')
     res.json({ products });
   } catch (err) {
     res.status(500).json({ error: "Search failed" });
