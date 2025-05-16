@@ -714,6 +714,30 @@ app.put("/api/admin/orders/:orderId", async (req, res) => {
   }
 });
 
+app.delete("/api/admin/orders/:orderId", async (req, res) => {
+  try {
+    const order = await Order.findByIdAndDelete(req.params.orderId);
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        error: "Order not found",
+      });
+    }
+
+    res.json({
+      success: true,
+      message: "Order deleted successfully",
+    });
+  } catch (err) {
+    console.error("Admin order delete error:", err);
+    res.status(500).json({
+      success: false,
+      error: "Failed to delete order",
+      details: process.env.NODE_ENV === "development" ? err.message : undefined,
+    });
+  }
+});
+
 // ====== User Routes for Admin Panel ======
 app.get("/api/admin/users", async (req, res) => {
   try {
