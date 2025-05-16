@@ -12,6 +12,7 @@ const orderSchema = new mongoose.Schema({
       ref: 'Product',
       required: true
     },
+    name: String,
     quantity: {
       type: Number,
       required: true
@@ -19,6 +20,10 @@ const orderSchema = new mongoose.Schema({
     price: {
       type: Number,
       required: true
+    },
+    image: {
+      url: String,
+      filename: String
     }
   }],
   shippingInfo: {
@@ -37,7 +42,15 @@ const orderSchema = new mongoose.Schema({
     shipping: Number,
     tax: Number,
     total: Number,
-    promoCode: String
+    promoCode: {
+      code: String,
+      discountType: String,
+      discountValue: Number,
+      promoCodeId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'PromoCode'
+      }
+    }
   },
   status: {
     type: String,
@@ -48,7 +61,7 @@ const orderSchema = new mongoose.Schema({
     type: Date,
     default: Date.now
   }
-});
+}, { timestamps: true });
 
 const Order = mongoose.model('Order', orderSchema);
 

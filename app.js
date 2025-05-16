@@ -13,6 +13,7 @@ import bcrypt from "bcryptjs";
 
 import Order from "./models/Order.js";
 import Category from "./models/Category.js";
+import PromoCode from "./models/PromoCode.js";
 
 const app = express();
 const port = 3000;
@@ -247,12 +248,12 @@ app.get("/api/protected", authenticate, (req, res) => {
   res.json({ message: "This is protected data", userId: req.userId });
 });
 
+
+// ====== Order Routes ======
+
 // Order Routes - Updated version
 app.post("/api/orders", authenticate, async (req, res) => {
   try {
-    console.log("Received order request from user:", req.userId);
-    console.log("Request body:", JSON.stringify(req.body, null, 2));
-
     const { shippingInfo, paymentInfo, items } = req.body;
 
     // Validate required fields
@@ -315,7 +316,7 @@ app.post("/api/orders", authenticate, async (req, res) => {
       paymentInfo.tax -
       (paymentInfo.discount || 0);
 
-    // Create order document with proper item mapping
+    // Create order document
     const order = new Order({
       user: req.userId,
       shippingInfo,
@@ -325,14 +326,13 @@ app.post("/api/orders", authenticate, async (req, res) => {
         total: calculatedTotal,
       },
       items: items.map((item) => ({
-        product: item.product, // Use item.product instead of item._id
+        product: item.product,
         name: item.name,
         price: item.price,
         quantity: item.quantity,
-        image: item.image,
+        image: item.image
       })),
       status: "pending",
-      createdAt: new Date(),
     });
 
     // Validate before saving
@@ -348,7 +348,14 @@ app.post("/api/orders", authenticate, async (req, res) => {
 
     // Save to database
     const savedOrder = await order.save();
-    console.log(`Order ${savedOrder._id} created successfully`);
+    
+    // Increment promo code usage if applied
+    if (paymentInfo.promoCode?.promoCodeId) {
+      await PromoCode.findByIdAndUpdate(
+        paymentInfo.promoCode.promoCodeId,
+        { $inc: { currentUses: 1 } }
+      );
+    }
 
     res.status(201).json({
       success: true,
@@ -357,8 +364,7 @@ app.post("/api/orders", authenticate, async (req, res) => {
     });
   } catch (err) {
     console.error("Order creation error:", err);
-
-    // Handle duplicate key errors (MongoDB)
+    
     if (err.code === 11000) {
       return res.status(400).json({
         success: false,
@@ -367,7 +373,6 @@ app.post("/api/orders", authenticate, async (req, res) => {
       });
     }
 
-    // Handle validation errors
     if (err.name === "ValidationError") {
       return res.status(400).json({
         success: false,
@@ -376,7 +381,6 @@ app.post("/api/orders", authenticate, async (req, res) => {
       });
     }
 
-    // Generic error
     res.status(500).json({
       success: false,
       error: "Failed to create order",
@@ -476,7 +480,7 @@ app.get("/api/orders/:orderId", authenticate, async (req, res) => {
 
 // ====== Admin Panel ROutes======
 
-// Delete Products for Admin Panel
+// ====== Delete Products Routes for Admin Panel ======
 app.delete("/api/products/:id", async (req, res) => {
   try {
     const product = await Product.findByIdAndDelete(req.params.id);
@@ -489,7 +493,7 @@ app.delete("/api/products/:id", async (req, res) => {
   }
 });
 
-// Update Products for Admin Panel
+// ====== Update Products Routes for Admin Panel ======
 app.put("/api/products/:id", async (req, res) => {
   try {
     const { name, description, price, category, stock, image } = req.body;
@@ -556,7 +560,7 @@ app.put("/api/products/:id", async (req, res) => {
   }
 });
 
-// Update Only Stocks for Admin Panel
+// ====== Update Stock Routes for Admin Panel ======
 app.put("/api/products/:id/stock", async (req, res) => {
   try {
     const { stock } = req.body;
@@ -592,7 +596,7 @@ app.put("/api/products/:id/stock", async (req, res) => {
   }
 });
 
-// Add Product for Admin Panel
+// ====== Add Product Routes for Admin Panel ======
 app.post("/api/products", async (req, res) => {
   try {
     const { name, description, price, category, stock, image } = req.body;
@@ -644,7 +648,7 @@ app.post("/api/products", async (req, res) => {
   }
 });
 
-// Order Routes for Admin Panel
+// ====== Order Routes for Admin Panel ======
 app.get("/api/admin/orders", async (req, res) => {
   try {
     const orders = await Order.find()
@@ -710,7 +714,7 @@ app.put("/api/admin/orders/:orderId", async (req, res) => {
   }
 });
 
-// User Routes for Admin Panel
+// ====== User Routes for Admin Panel ======
 app.get("/api/admin/users", async (req, res) => {
   try {
     const users = await User.find().select("-password");
@@ -788,7 +792,7 @@ app.delete("/api/admin/users/:id", async (req, res) => {
 });
 
 
-// Add AdminSettings for Admin Panel
+// ====== AdminSettings Routes for Admin Panel ======
 app.get('/api/admin/me', async (req, res) => {
   try {
     const user = await User.findOne({ role: "Admin" });
@@ -1260,6 +1264,149 @@ app.delete('/api/categories/:id', async (req, res) => {
 
 
 
+// ======  Promo Code Routes for Admin Panel ====== 
+
+app.get('/api/admin/promo-codes', async (req, res) => {
+  try {
+    const promoCodes = await PromoCode.find().sort({ createdAt: -1 });
+    res.json({ success: true, promoCodes });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch promo codes" });
+  }
+});
+
+app.post('/api/admin/promo-codes', async (req, res) => {
+  try {
+    const {
+      code,
+      discountType,
+      discountValue,
+      minOrderAmount,
+      maxDiscountAmount,
+      endDate,
+      maxUses
+    } = req.body;
+
+    // Basic validation
+    if (!code || !discountType || !discountValue || !endDate) {
+      return res.status(400).json({ error: "Required fields are missing" });
+    }
+
+    if (discountType === "percentage" && discountValue > 100) {
+      return res.status(400).json({ error: "Percentage discount cannot exceed 100%" });
+    }
+
+    const newPromoCode = new PromoCode({
+      code: code.toUpperCase(),
+      discountType,
+      discountValue,
+      minOrderAmount: minOrderAmount || 0,
+      maxDiscountAmount: maxDiscountAmount || null,
+      endDate: new Date(endDate),
+      maxUses: maxUses || null
+    });
+
+    await newPromoCode.save();
+    res.status(201).json({ success: true, promoCode: newPromoCode });
+  } catch (err) {
+    if (err.code === 11000) {
+      return res.status(400).json({ error: "Promo code already exists" });
+    }
+    res.status(500).json({ error: "Failed to create promo code" });
+  }
+});
+
+app.put('/api/admin/promo-codes/:id', async (req, res) => {
+  try {
+    const { isActive } = req.body;
+    const promoCode = await PromoCode.findByIdAndUpdate(
+      req.params.id,
+      { isActive },
+      { new: true }
+    );
+
+    if (!promoCode) {
+      return res.status(404).json({ error: "Promo code not found" });
+    }
+
+    res.json({ success: true, promoCode });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to update promo code" });
+  }
+});
+
+app.delete('/api/admin/promo-codes/:id', async (req, res) => {
+  try {
+    const promoCode = await PromoCode.findByIdAndDelete(req.params.id);
+    if (!promoCode) {
+      return res.status(404).json({ error: "Promo code not found" });
+    }
+    res.json({ success: true, message: "Promo code deleted" });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to delete promo code" });
+  }
+});
+
+app.get('/api/promo-codes/validate', async (req, res) => {
+  try {
+    const { code, subtotal } = req.query;
+    
+    if (!code) {
+      return res.status(400).json({ error: "Promo code is required" });
+    }
+
+    const promoCode = await PromoCode.findOne({ 
+      code: code.toUpperCase(),
+      isActive: true,
+      startDate: { $lte: new Date() },
+      endDate: { $gte: new Date() }
+    });
+
+    if (!promoCode) {
+      return res.status(404).json({ error: "Invalid or expired promo code" });
+    }
+
+    // Check max uses
+    if (promoCode.maxUses && promoCode.currentUses >= promoCode.maxUses) {
+      return res.status(400).json({ error: "Promo code has reached its usage limit" });
+    }
+
+    // Check minimum order amount
+    const orderSubtotal = parseFloat(subtotal) || 0;
+    if (orderSubtotal < promoCode.minOrderAmount) {
+      return res.status(400).json({ 
+        error: `Minimum order amount of $${promoCode.minOrderAmount.toFixed(2)} required`
+      });
+    }
+
+    let discountAmount = 0;
+    
+    if (promoCode.discountType === "percentage") {
+      discountAmount = orderSubtotal * (promoCode.discountValue / 100);
+      if (promoCode.maxDiscountAmount && discountAmount > promoCode.maxDiscountAmount) {
+        discountAmount = promoCode.maxDiscountAmount;
+      }
+    } else {
+      discountAmount = promoCode.discountValue;
+    }
+
+    // Ensure discount doesn't exceed order subtotal
+    discountAmount = Math.min(discountAmount, orderSubtotal);
+
+    res.json({
+      success: true,
+      discountAmount,
+      promoCode: promoCode.code,
+      discountType: promoCode.discountType,
+      discountValue: promoCode.discountValue,
+      promoCodeId: promoCode._id
+    });
+
+  } catch (err) {
+    console.error("Promo code validation error:", err);
+    res.status(500).json({ error: "Failed to validate promo code" });
+  }
+});
 
 
 
