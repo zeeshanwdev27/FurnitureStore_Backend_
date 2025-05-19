@@ -1280,7 +1280,7 @@ app.get('/api/analytics/recent-activity', authenticateAdmin,  async (req, res) =
 
 
 // ====== Create/Delete New Category Routes for Admin Panel ======
-app.get('/api/categories', authenticateAdmin, async (req, res) => {
+app.get('/api/categories', async (req, res) => {
   try {
     const categories = await Category.find().sort({ name: 1 });
     res.json(categories);
