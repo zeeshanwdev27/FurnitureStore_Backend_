@@ -21,9 +21,10 @@ const port = 3000;
 // Middleware
 app.use(
   cors({
-    origin: "http://localhost:5173", // Or whatever port your React app runs on
+    origin: "http://localhost:5173",
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE"],
+    allowedHeaders: ["Content-Type", "Authorization"],
   })
 );
 app.use(express.json());
@@ -42,6 +43,29 @@ const authenticate = async (req, res, next) => {
     next();
   } catch (err) {
     res.status(401).json({ error: "Invalid or expired token" });
+  }
+};
+
+// Admin Authentication Middleware
+const authenticateAdmin = async (req, res, next) => {
+  try {
+    const token = req.headers.authorization?.split(" ")[1];
+    if (!token) {
+      return res.status(401).json({ error: "Admin authentication required" });
+    }
+
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    
+    // Check if the user is an admin
+    const user = await User.findById(decoded.userId);
+    if (!user || user.role !== "Admin") {
+      return res.status(403).json({ error: "Admin access required" });
+    }
+    
+    req.userId = decoded.userId;
+    next();
+  } catch (err) {
+    res.status(401).json({ error: "Invalid or expired admin token" });
   }
 };
 
@@ -178,7 +202,7 @@ app.post("/api/signup", async (req, res) => {
       // Generate JWT token
       { userId: newUser._id },
       process.env.JWT_SECRET,
-      { expiresIn: "1d" }
+      { expiresIn: "7d" }
     );
 
     res.status(201).json({
@@ -480,8 +504,53 @@ app.get("/api/orders/:orderId", authenticate, async (req, res) => {
 
 // ====== Admin Panel ROutes======
 
+// ====== AdminSignIn Route for Admin Panel ======
+app.post("/api/admin/signin", async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    const user = await User.findOne({ email, role: "Admin" });
+    
+    if (!user) {
+      return res.status(401).json({ error: "Invalid admin credentials" });
+    }
+
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
+      return res.status(401).json({ error: "Invalid admin credentials" });
+    }
+
+    // Update lastLogin timestamp
+    user.lastLogin = new Date();
+    await user.save();
+
+    const token = jwt.sign(
+      { userId: user._id },
+      process.env.JWT_SECRET,
+      { expiresIn: "7d" }
+    );
+
+    res.json({
+      message: "Admin login successful",
+      user: {
+        id: user._id,
+        email: user.email,
+        username: user.username,
+        role: user.role
+      },
+      token,
+    });
+  } catch (err) {
+    console.error("Admin login error:", err);
+    res.status(500).json({ error: "Server error during admin login" });
+  }
+});
+
+app.get('/api/admin/verify-token', authenticateAdmin, (req, res) => {
+  res.json({ isValid: true });
+});
+
 // ====== Delete Products Routes for Admin Panel ======
-app.delete("/api/products/:id", async (req, res) => {
+app.delete("/api/products/:id", authenticateAdmin, async (req, res) => {
   try {
     const product = await Product.findByIdAndDelete(req.params.id);
     if (!product) {
@@ -494,7 +563,7 @@ app.delete("/api/products/:id", async (req, res) => {
 });
 
 // ====== Update Products Routes for Admin Panel ======
-app.put("/api/products/:id", async (req, res) => {
+app.put("/api/products/:id", authenticateAdmin, async (req, res) => {
   try {
     const { name, description, price, category, stock, image } = req.body;
 
@@ -561,7 +630,7 @@ app.put("/api/products/:id", async (req, res) => {
 });
 
 // ====== Update Stock Routes for Admin Panel ======
-app.put("/api/products/:id/stock", async (req, res) => {
+app.put("/api/products/:id/stock", authenticateAdmin, async (req, res) => {
   try {
     const { stock } = req.body;
 
@@ -597,7 +666,7 @@ app.put("/api/products/:id/stock", async (req, res) => {
 });
 
 // ====== Add Product Routes for Admin Panel ======
-app.post("/api/products", async (req, res) => {
+app.post("/api/products", authenticateAdmin, async (req, res) => {
   try {
     const { name, description, price, category, stock, image } = req.body;
 
@@ -649,7 +718,7 @@ app.post("/api/products", async (req, res) => {
 });
 
 // ====== Order Routes for Admin Panel ======
-app.get("/api/admin/orders", async (req, res) => {
+app.get("/api/admin/orders", authenticateAdmin, async (req, res) => {
   try {
     const orders = await Order.find()
       .populate("user", "email username") // Include user info
@@ -671,7 +740,7 @@ app.get("/api/admin/orders", async (req, res) => {
   }
 });
 
-app.put("/api/admin/orders/:orderId", async (req, res) => {
+app.put("/api/admin/orders/:orderId", authenticateAdmin, async (req, res) => {
   try {
     const { status } = req.body;
 
@@ -714,7 +783,7 @@ app.put("/api/admin/orders/:orderId", async (req, res) => {
   }
 });
 
-app.delete("/api/admin/orders/:orderId", async (req, res) => {
+app.delete("/api/admin/orders/:orderId", authenticateAdmin, async (req, res) => {
   try {
     const order = await Order.findByIdAndDelete(req.params.orderId);
     if (!order) {
@@ -739,7 +808,7 @@ app.delete("/api/admin/orders/:orderId", async (req, res) => {
 });
 
 // ====== User Routes for Admin Panel ======
-app.get("/api/admin/users", async (req, res) => {
+app.get("/api/admin/users", authenticateAdmin, async (req, res) => {
   try {
     const users = await User.find().select("-password");
     res.json({ users });
@@ -748,7 +817,7 @@ app.get("/api/admin/users", async (req, res) => {
   }
 });
 
-app.post("/api/admin/users", async (req, res) => {
+app.post("/api/admin/users", authenticateAdmin, async (req, res) => {
   try {
     const { username, email, password, role, status } = req.body;
 
@@ -784,7 +853,7 @@ app.post("/api/admin/users", async (req, res) => {
   }
 });
 
-app.put("/api/admin/users/:id", async (req, res) => {
+app.put("/api/admin/users/:id", authenticateAdmin, async (req, res) => {
   try {
     const { username, email, role, status } = req.body;
     const user = await User.findByIdAndUpdate(
@@ -803,7 +872,7 @@ app.put("/api/admin/users/:id", async (req, res) => {
   }
 });
 
-app.delete("/api/admin/users/:id", async (req, res) => {
+app.delete("/api/admin/users/:id", authenticateAdmin, async (req, res) => {
   try {
     const user = await User.findByIdAndDelete(req.params.id);
     if (!user) {
@@ -817,7 +886,7 @@ app.delete("/api/admin/users/:id", async (req, res) => {
 
 
 // ====== AdminSettings Routes for Admin Panel ======
-app.get('/api/admin/me', async (req, res) => {
+app.get('/api/admin/me', authenticateAdmin, async (req, res) => {
   try {
     const user = await User.findOne({ role: "Admin" });
     // console.log(user);
@@ -830,7 +899,7 @@ app.get('/api/admin/me', async (req, res) => {
   }
 });
 
-app.put('/api/admin/update-profile', async (req, res) => {
+app.put('/api/admin/update-profile', authenticateAdmin, async (req, res) => {
   try {
     const { email, currentPassword, newPassword } = req.body;
     const user = await User.findOne({ role: "Admin" });
@@ -873,11 +942,8 @@ app.put('/api/admin/update-profile', async (req, res) => {
   }
 });
 
-
-
-
 // ====== Analytics Routes for Admin Panel ======
-app.get('/api/analytics/stats', async (req, res) => {
+app.get('/api/analytics/stats', authenticateAdmin, async (req, res) => {
   try {
     const { range = 'Last 7 Days' } = req.query;
     
@@ -982,7 +1048,7 @@ app.get('/api/analytics/stats', async (req, res) => {
   }
 });
 
-app.get('/api/analytics/sales',  async (req, res) => {
+app.get('/api/analytics/sales', authenticateAdmin,  async (req, res) => {
   try {
     const { range = 'Last 7 Days', groupBy = 'By Month' } = req.query;
     
@@ -1077,7 +1143,7 @@ app.get('/api/analytics/sales',  async (req, res) => {
   }
 });
 
-app.get('/api/analytics/traffic',  async (req, res) => {
+app.get('/api/analytics/traffic', authenticateAdmin,  async (req, res) => {
   try {
     // In a real app, you would get this from your analytics system
     // This is just a placeholder with demo data
@@ -1093,7 +1159,7 @@ app.get('/api/analytics/traffic',  async (req, res) => {
   }
 });
 
-app.get('/api/analytics/top-products',  async (req, res) => {
+app.get('/api/analytics/top-products', authenticateAdmin,  async (req, res) => {
   try {
     const { range = 'Last 7 Days', limit = 5 } = req.query;
     
@@ -1161,7 +1227,7 @@ app.get('/api/analytics/top-products',  async (req, res) => {
   }
 });
 
-app.get('/api/analytics/recent-activity',  async (req, res) => {
+app.get('/api/analytics/recent-activity', authenticateAdmin,  async (req, res) => {
   try {
     const { limit = 5 } = req.query;
     
@@ -1214,7 +1280,7 @@ app.get('/api/analytics/recent-activity',  async (req, res) => {
 
 
 // ====== Create/Delete New Category Routes for Admin Panel ======
-app.get('/api/categories', async (req, res) => {
+app.get('/api/categories', authenticateAdmin, async (req, res) => {
   try {
     const categories = await Category.find().sort({ name: 1 });
     res.json(categories);
@@ -1227,7 +1293,7 @@ app.get('/api/categories', async (req, res) => {
   }
 });
 
-app.post('/api/categories', async (req, res) => {
+app.post('/api/categories', authenticateAdmin, async (req, res) => {
   try {
     const { name } = req.body;
     
@@ -1260,7 +1326,7 @@ app.post('/api/categories', async (req, res) => {
   }
 });
 
-app.get('/api/category/:categoryId', async (req, res) => {
+app.get('/api/category/:categoryId', authenticateAdmin, async (req, res) => {
   try {
     const products = await Product.find({ 
       category: req.params.categoryId 
@@ -1272,7 +1338,7 @@ app.get('/api/category/:categoryId', async (req, res) => {
   }
 });
 
-app.delete('/api/categories/:id', async (req, res) => {
+app.delete('/api/categories/:id', authenticateAdmin, async (req, res) => {
   try {
     const deletedCategory = await Category.findByIdAndDelete(req.params.id);
     if (!deletedCategory) {
@@ -1290,7 +1356,7 @@ app.delete('/api/categories/:id', async (req, res) => {
 
 // ======  Promo Code Routes for Admin Panel ====== 
 
-app.get('/api/admin/promo-codes', async (req, res) => {
+app.get('/api/admin/promo-codes', authenticateAdmin, async (req, res) => {
   try {
     const promoCodes = await PromoCode.find().sort({ createdAt: -1 });
     res.json({ success: true, promoCodes });
@@ -1299,7 +1365,7 @@ app.get('/api/admin/promo-codes', async (req, res) => {
   }
 });
 
-app.post('/api/admin/promo-codes', async (req, res) => {
+app.post('/api/admin/promo-codes', authenticateAdmin, async (req, res) => {
   try {
     const {
       code,
@@ -1340,7 +1406,7 @@ app.post('/api/admin/promo-codes', async (req, res) => {
   }
 });
 
-app.put('/api/admin/promo-codes/:id', async (req, res) => {
+app.put('/api/admin/promo-codes/:id', authenticateAdmin, async (req, res) => {
   try {
     const { isActive } = req.body;
     const promoCode = await PromoCode.findByIdAndUpdate(
@@ -1359,7 +1425,7 @@ app.put('/api/admin/promo-codes/:id', async (req, res) => {
   }
 });
 
-app.delete('/api/admin/promo-codes/:id', async (req, res) => {
+app.delete('/api/admin/promo-codes/:id', authenticateAdmin, async (req, res) => {
   try {
     const promoCode = await PromoCode.findByIdAndDelete(req.params.id);
     if (!promoCode) {
@@ -1371,7 +1437,7 @@ app.delete('/api/admin/promo-codes/:id', async (req, res) => {
   }
 });
 
-app.get('/api/promo-codes/validate', async (req, res) => {
+app.get('/api/promo-codes/validate', authenticateAdmin, async (req, res) => {
   try {
     const { code, subtotal } = req.query;
     
