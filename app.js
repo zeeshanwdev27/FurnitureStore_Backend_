@@ -1437,7 +1437,7 @@ app.delete('/api/admin/promo-codes/:id', authenticateAdmin, async (req, res) => 
   }
 });
 
-app.get('/api/promo-codes/validate', authenticateAdmin, async (req, res) => {
+app.get('/api/promo-codes/validate', async (req, res) => {
   try {
     const { code, subtotal } = req.query;
     
